@@ -1,21 +1,17 @@
-import { DAYS_OF_WEEK_IN_ORDER } from "@/data/constants"
-import { db } from "@/drizzle/db"
-import { ScheduleAvailabilityTable } from "@/drizzle/schema"
-import { getCalendarEventTimes } from "@/server/googleCalendar"
+import { DAYS_OF_WEEK_IN_ORDER } from "../data/constants"
+import { db } from "../drizzle/db"
+import { ScheduleAvailabilityTable } from "../drizzle/schema"
+import { getCalendarEventTimes } from "../server/googleCalendar"
 import {
-  addMinutes,
-  areIntervalsOverlapping,
-  isFriday,
   isMonday,
-  isSaturday,
-  isSunday,
-  isThursday,
   isTuesday,
   isWednesday,
-  isWithinInterval,
-  setHours,
-  setMinutes,
-} from "date-fns"
+  isThursday,
+  isFriday,
+  isSaturday,
+  isSunday
+} from "date-fns" // Add this import
+
 import { fromZonedTime } from "date-fns-tz"
 
 export async function getValidTimesFromSchedule(
@@ -27,17 +23,21 @@ export async function getValidTimesFromSchedule(
 
   if (start == null || end == null) return []
 
-  const schedule = await db.query.ScheduleTable.findFirst({
-    where: ({ clerkUserId: userIdCol }, { eq }) =>
-      eq(userIdCol, event.clerkUserId),
-    with: { availabilities: true },
+  // Fetch the schedule from the database
+  const schedule = await db.query.schedule.findFirst({
+    where: {
+      clerkUserId: event.clerkUserId,
+    },
+    include: {
+      availabilities: true, // Include related availabilities
+    },
   })
 
-  if (schedule == null) return []
+  if (!schedule) return []
 
   const groupedAvailabilities = Object.groupBy(
     schedule.availabilities,
-    a => a.dayOfWeek
+    (a) => a.dayOfWeek
   )
 
   const eventTimes = await getCalendarEventTimes(event.clerkUserId, {
@@ -45,27 +45,24 @@ export async function getValidTimesFromSchedule(
     end,
   })
 
-  return timesInOrder.filter(intervalDate => {
+  return timesInOrder.filter((intervalDate) => {
     const availabilities = getAvailabilities(
       groupedAvailabilities,
       intervalDate,
       schedule.timezone
     )
+
     const eventInterval = {
       start: intervalDate,
       end: addMinutes(intervalDate, event.durationInMinutes),
     }
 
     return (
-      eventTimes.every(eventTime => {
-        return !areIntervalsOverlapping(eventTime, eventInterval)
-      }) &&
-      availabilities.some(availability => {
-        return (
-          isWithinInterval(eventInterval.start, availability) &&
-          isWithinInterval(eventInterval.end, availability)
-        )
-      })
+      eventTimes.every((eventTime) => !areIntervalsOverlapping(eventTime, eventInterval)) &&
+      availabilities.some((availability) =>
+        isWithinInterval(eventInterval.start, availability) &&
+        isWithinInterval(eventInterval.end, availability)
+      )
     )
   })
 }
@@ -73,55 +70,35 @@ export async function getValidTimesFromSchedule(
 function getAvailabilities(
   groupedAvailabilities: Partial<
     Record<
-      (typeof DAYS_OF_WEEK_IN_ORDER)[number],
-      (typeof ScheduleAvailabilityTable.$inferSelect)[]
+      string,
+      ScheduleAvailabilityTable[]
     >
   >,
   date: Date,
   timezone: string
 ) {
-  let availabilities:
-    | (typeof ScheduleAvailabilityTable.$inferSelect)[]
-    | undefined
+  let availabilities: ScheduleAvailabilityTable[] | undefined
 
-  if (isMonday(date)) {
-    availabilities = groupedAvailabilities.monday
-  }
-  if (isTuesday(date)) {
-    availabilities = groupedAvailabilities.tuesday
-  }
-  if (isWednesday(date)) {
-    availabilities = groupedAvailabilities.wednesday
-  }
-  if (isThursday(date)) {
-    availabilities = groupedAvailabilities.thursday
-  }
-  if (isFriday(date)) {
-    availabilities = groupedAvailabilities.friday
-  }
-  if (isSaturday(date)) {
-    availabilities = groupedAvailabilities.saturday
-  }
-  if (isSunday(date)) {
-    availabilities = groupedAvailabilities.sunday
-  }
+  // Determine which day's availability to check
+  if (isMonday(date)) availabilities = groupedAvailabilities.monday
+  if (isTuesday(date)) availabilities = groupedAvailabilities.tuesday
+  if (isWednesday(date)) availabilities = groupedAvailabilities.wednesday
+  if (isThursday(date)) availabilities = groupedAvailabilities.thursday
+  if (isFriday(date)) availabilities = groupedAvailabilities.friday
+  if (isSaturday(date)) availabilities = groupedAvailabilities.saturday
+  if (isSunday(date)) availabilities = groupedAvailabilities.sunday
 
-  if (availabilities == null) return []
+  if (!availabilities) return []
 
   return availabilities.map(({ startTime, endTime }) => {
+    // Correct way to set hours and minutes
     const start = fromZonedTime(
-      setMinutes(
-        setHours(date, parseInt(startTime.split(":")[0])),
-        parseInt(startTime.split(":")[1])
-      ),
+      setMinutes(setHours(date, parseInt(startTime.split(":")[0])), parseInt(startTime.split(":")[1])),
       timezone
     )
 
     const end = fromZonedTime(
-      setMinutes(
-        setHours(date, parseInt(endTime.split(":")[0])),
-        parseInt(endTime.split(":")[1])
-      ),
+      setMinutes(setHours(date, parseInt(endTime.split(":")[0])), parseInt(endTime.split(":")[1])),
       timezone
     )
 
